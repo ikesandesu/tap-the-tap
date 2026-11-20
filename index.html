@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>STOP THE STOP ～とりあえず止めとけ～</title>
+    <title>TAP THE TAP ～とりあえずタップしとけ～</title>
     <style>
       * {
         box-sizing: border-box;
@@ -188,8 +188,8 @@
 
       <!-- タイトル画面 -->
       <div id="title-screen">
-        <h1 class="title-main">STOP THE STOP</h1>
-        <p class="title-sub">～とりあえず止めとけ～</p>
+        <h1 class="title-main">TAP THE TAP</h1>
+        <p class="title-sub">～とりあえずタップしとけ～</p>
         <p class="title-best">BEST: <span id="title-best-text">0</span></p>
         <div class="tap-start">TAP TO START</div>
       </div>
@@ -289,9 +289,9 @@
       let targetWidth = 120;
 
       function setupNextLevel() {
-        targetWidth = Math.max(14, 120 - (level - 1) * 6);
+        targetWidth = Math.max(14, 120 - (level - 1) * 1.5);    // 1レベルごとに1.5px縮む
         targetX = centerX - (targetWidth / 2);
-        barSpeed = Math.min(13, 3.5 + (level - 1) * 0.4);
+        barSpeed = Math.min(10, 3.5 + (level - 1) * 0.1);     // 1レベルごとに+0.1
       }
 
       // 画面の描画のみ（動きの更新は行わない）
@@ -395,7 +395,7 @@
         const levelMsg = clearedLevel > 0
           ? `レベル${clearedLevel}までクリア！`
           : `レベル1で惜しくも失敗…`;
-        const shareText = encodeURIComponent(`【STOP THE STOP】${levelMsg}スコアは ${score} 点でした！\n#STOP_THE_STOP #ゲーム制作`);
+        const shareText = encodeURIComponent(`【STOP THE STOP】${levelMsg}スコアは ${score} 点でした！\n#TAP_THE_TAP #ゲーム制作\n\nhttps://x.com/freestylenote/status/2123710909751382400`);
         const currentUrl = window.location.href;
         const urlParam = currentUrl.startsWith('http') ? `&url=${encodeURIComponent(currentUrl)}` : '';
         
