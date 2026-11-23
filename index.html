@@ -11,8 +11,11 @@
         -webkit-user-select: none;
         touch-action: manipulation;
       }
-      body {
+      html, body {
         margin: 0;
+        height: 100%;
+      }
+      body {
         background-color: #121212;
         color: #ffffff;
         font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -20,12 +23,14 @@
         justify-content: center;
         align-items: center;
         height: 100vh;
+        height: 100dvh; /* スマホのアドレスバーで見切れないように */
         overflow: hidden;
       }
       #game-container {
         width: 100%;
         max-width: 400px;
         height: 100vh;
+        height: 100dvh;
         max-height: 700px;
         background-color: #1e1e24;
         position: relative;
@@ -50,7 +55,6 @@
         align-items: center;
         gap: 12px;
       }
-      /* ミュートボタンのデザイン */
       #mute-btn {
         background: #2b2b36;
         border: 1px solid #444;
@@ -77,7 +81,9 @@
         background-color: #2b2b36;
         border-radius: 12px;
         width: 100%;
-        height: 360px;
+        max-width: 360px;
+        aspect-ratio: 1 / 1; /* 幅が狭くても歪まない */
+        height: auto;
         cursor: pointer;
       }
       .instruction {
@@ -101,12 +107,12 @@
         cursor: pointer;
       }
       .title-main {
-        font-size: min(7vw, 30px);   /* 画面幅に合わせて縮み、最大30px */
+        font-size: min(7vw, 30px);
         font-weight: 900;
         letter-spacing: 1px;
         line-height: 1.1;
         margin: 0;
-        white-space: nowrap;         /* 折り返しを禁止 */
+        white-space: nowrap;
       }
       .title-sub {
         font-size: 16px;
@@ -129,6 +135,9 @@
       @keyframes blink {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.2; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tap-start { animation: none; }
       }
 
       #result-screen {
@@ -168,6 +177,10 @@
         text-decoration: none;
         display: inline-block;
       }
+      .btn:focus-visible, #mute-btn:focus-visible {
+        outline: 2px solid #ffd740;
+        outline-offset: 2px;
+      }
     </style>
   </head>
   <body>
@@ -176,15 +189,15 @@
         <div>LEVEL <span id="level-text">1</span></div>
         <div class="header-right">
           <div>BEST: <span id="best-text">0</span></div>
-          <button id="mute-btn" title="ミュート切替">🔊</button>
+          <button id="mute-btn" title="ミュート切替" aria-label="ミュート切替">🔊</button>
         </div>
       </div>
-      
+
       <div class="score-display" id="score-text">0</div>
-      
-      <canvas id="gameCanvas" width="360" height="360"></canvas>
-      
-      <div class="instruction">画面タップ / クリックでストップ！</div>
+
+      <canvas id="gameCanvas"></canvas>
+
+      <div class="instruction">画面タップ / クリック / スペースキーでストップ！</div>
 
       <!-- タイトル画面 -->
       <div id="title-screen">
@@ -198,16 +211,37 @@
         <h2 style="color: #ff5252; font-size: 32px; margin: 0;">GAME OVER</h2>
         <p style="font-size: 20px; margin: 15px 0;">SCORE: <strong id="final-score" style="font-size: 36px;">0</strong></p>
         <p id="new-record-msg" style="color: #ffd740; font-weight: bold; display: none;">🎉 NEW RECORD! 🎉</p>
-        
+
         <button class="btn btn-retry" id="retry-btn">もう1回プレイ</button>
         <a class="btn btn-share" id="share-btn" href="#" target="_blank" rel="noopener noreferrer">𝕏 で結果をシェア</a>
       </div>
     </div>
 
     <script>
+      // ===== 設定 =====
+      const LOGICAL_SIZE = 360;       // 描画上の論理サイズ
+      const READY_MS = 600;           // ゲーム開始前の「READY」表示時間
+      const RANDOM_TARGET_LEVEL = 11; // このレベルからターゲット位置がランダムになる
+      const EDGE_JUDGE = true;        // true: バーが少しでもかかれば成功 / false: バーの中心のみで判定
+      const FLASH_MS = 250;           // 成功時にターゲットが光る時間
+
+      // ===== localStorage を安全に扱う（使えない環境でも落ちない）=====
+      function safeGet(key) {
+        try { return localStorage.getItem(key); } catch (e) { return null; }
+      }
+      function safeSet(key, value) {
+        try { localStorage.setItem(key, value); } catch (e) { /* 保存できなくても続行 */ }
+      }
+
       const canvas = document.getElementById('gameCanvas');
       const ctx = canvas.getContext('2d');
-      
+
+      // Retina 等の高解像度画面でぼやけないようにする
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = LOGICAL_SIZE * dpr;
+      canvas.height = LOGICAL_SIZE * dpr;
+      ctx.scale(dpr, dpr);
+
       const scoreText = document.getElementById('score-text');
       const levelText = document.getElementById('level-text');
       const bestText = document.getElementById('best-text');
@@ -220,39 +254,49 @@
       const retryBtn = document.getElementById('retry-btn');
       const shareBtn = document.getElementById('share-btn');
 
-      let bestScore = localStorage.getItem('justStopBest') || 0;
+      let bestScore = Number(safeGet('justStopBest')) || 0;
       bestText.textContent = bestScore;
       titleBestText.textContent = bestScore;
 
-      // ミュート状態の管理（設定もブラウザに保存）
-      let isMuted = localStorage.getItem('justStopMuted') === 'true';
+      let isMuted = safeGet('justStopMuted') === 'true';
       muteBtn.textContent = isMuted ? '🔇' : '🔊';
 
       muteBtn.addEventListener('pointerdown', (e) => {
-        e.stopPropagation(); // ゲームのタップ判定と重ならないようにする
+        e.stopPropagation();
         isMuted = !isMuted;
         muteBtn.textContent = isMuted ? '🔇' : '🔊';
-        localStorage.setItem('justStopMuted', isMuted);
+        safeSet('justStopMuted', isMuted);
       });
 
-      // Web Audio API（音量を控えめに調整）
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      function playSound(type, level) {
-        if (isMuted) return; // ミュート中は鳴らさない
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
+      // ===== Web Audio（最初に必要になった時に作る。作れない環境でもゲームは動く）=====
+      let audioCtx = null;
+      function getAudio() {
+        if (!audioCtx) {
+          try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) audioCtx = new AC();
+          } catch (e) { audioCtx = null; }
+        }
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        return audioCtx;
+      }
 
-        const now = audioCtx.currentTime;
+      function playSound(type, level) {
+        if (isMuted) return;
+        const ac = getAudio();
+        if (!ac) return;
+
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.connect(gain);
+        gain.connect(ac.destination);
+
+        const now = ac.currentTime;
         if (type === 'success') {
           osc.type = 'sine';
           const freq = Math.min(1200, 440 + (level - 1) * 35);
           osc.frequency.setValueAtTime(freq, now);
           osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + 0.1);
-          // 音量を控えめ（0.07）に設定
           gain.gain.setValueAtTime(0.07, now);
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
           osc.start(now);
@@ -261,7 +305,6 @@
           osc.type = 'sawtooth';
           osc.frequency.setValueAtTime(150, now);
           osc.frequency.linearRampToValueAtTime(80, now + 0.3);
-          // ブザー音は耳に響きやすいのでさらに控えめ（0.04）に設定
           gain.gain.setValueAtTime(0.04, now);
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
           osc.start(now);
@@ -269,50 +312,83 @@
         }
       }
 
+      // ===== ゲーム状態 =====
       let score = 0;
       let level = 1;
       let isStarted = false;   // タイトル画面から開始済みか
       let isGameOver = false;
-      let animationId;
+      let isReady = false;     // READY 表示中（入力を受け付けない）
+      let animationId = null;
+      let readyTimer = null;
+      let lastTime = 0;
+      let flashStart = -Infinity;
 
       const trackY = 180;
       const trackMargin = 30;
-      const trackWidth = canvas.width - trackMargin * 2;
-      const centerX = canvas.width / 2;
-      
+      const trackWidth = LOGICAL_SIZE - trackMargin * 2;
+      const centerX = LOGICAL_SIZE / 2;
+
       let barX = trackMargin;
-      let barWidth = 10;
-      let barSpeed = 3.5;
+      const barWidth = 10;
+      let barSpeed = 3.5;      // 60fps 基準の 1 フレームあたりの移動量
       let barDirection = 1;
 
       let targetX = 120;
       let targetWidth = 120;
+      let targetIsCentered = true;
 
       function setupNextLevel() {
-        targetWidth = Math.max(14, 120 - (level - 1) * 1.5);    // 1レベルごとに1.5px縮む
-        targetX = centerX - (targetWidth / 2);
-        barSpeed = Math.min(10, 3.5 + (level - 1) * 0.1);     // 1レベルごとに+0.1
+        targetWidth = Math.max(14, 120 - (level - 1) * 1.5);
+        barSpeed = Math.min(10, 3.5 + (level - 1) * 0.1);
+
+        if (level >= RANDOM_TARGET_LEVEL) {
+          targetIsCentered = false;
+          targetX = trackMargin + Math.random() * (trackWidth - targetWidth);
+        } else {
+          targetIsCentered = true;
+          targetX = centerX - (targetWidth / 2);
+        }
       }
 
-      // 画面の描画のみ（動きの更新は行わない）
-      function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      function draw(now = performance.now()) {
+        ctx.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
 
         // 1. レール
         ctx.fillStyle = '#444455';
         ctx.fillRect(trackMargin, trackY - 10, trackWidth, 20);
 
-        // 2. ターゲットエリア
-        ctx.fillStyle = '#00e676';
+        // 2. ターゲットエリア（成功直後は光る）
+        const flash = Math.max(0, 1 - (now - flashStart) / FLASH_MS);
+        if (flash > 0) {
+          ctx.shadowColor = '#00e676';
+          ctx.shadowBlur = 30 * flash;
+          ctx.fillStyle = '#b9f6ca';
+        } else {
+          ctx.fillStyle = '#00e676';
+        }
         ctx.fillRect(targetX, trackY - 16, targetWidth, 32);
+        ctx.shadowBlur = 0;
 
-        // 中央の基準線
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.fillRect(centerX - 1, trackY - 20, 2, 40);
+        // 中央の基準線（ターゲットが中央にある間だけ表示）
+        if (targetIsCentered) {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.fillRect(centerX - 1, trackY - 20, 2, 40);
+        }
 
         // 3. バー
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(barX, trackY - 28, barWidth, 56);
+
+        // 4. READY 表示
+        if (isReady) {
+          ctx.fillStyle = 'rgba(30, 30, 36, 0.55)';
+          ctx.fillRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '900 44px "Helvetica Neue", Arial, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('READY', centerX, trackY - 90);
+        }
       }
 
       function resetState() {
@@ -321,26 +397,39 @@
         isGameOver = false;
         barX = trackMargin;
         barDirection = 1;
-        
+        flashStart = -Infinity;
+
         scoreText.textContent = score;
         levelText.textContent = level;
         resultScreen.style.display = 'none';
         newRecordMsg.style.display = 'none';
-        
+
         setupNextLevel();
       }
 
       function initGame() {
         cancelAnimationFrame(animationId);
+        clearTimeout(readyTimer);
         resetState();
-        loop();
+
+        // 少し待ってから動き出す（リトライ直後のミスタップ防止）
+        isReady = true;
+        draw();
+        readyTimer = setTimeout(() => {
+          isReady = false;
+          lastTime = 0;
+          animationId = requestAnimationFrame(loop);
+        }, READY_MS);
       }
 
-      function loop() {
+      function loop(t) {
         if (isGameOver) return;
 
-        // バーの移動
-        barX += barSpeed * barDirection;
+        // 経過時間から移動量を計算（リフレッシュレートに依存しない）
+        const dt = lastTime ? Math.min((t - lastTime) / 16.667, 3) : 1;
+        lastTime = t;
+
+        barX += barSpeed * barDirection * dt;
         if (barX + barWidth >= trackMargin + trackWidth) {
           barX = trackMargin + trackWidth - barWidth;
           barDirection = -1;
@@ -349,30 +438,41 @@
           barDirection = 1;
         }
 
-        draw();
+        draw(t);
         animationId = requestAnimationFrame(loop);
       }
 
-      function handleTap(e) {
-        if (!isStarted || isGameOver) return;
-        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
-
+      function isHit() {
+        if (EDGE_JUDGE) {
+          return barX + barWidth >= targetX && barX <= targetX + targetWidth;
+        }
         const barCenter = barX + barWidth / 2;
-        
-        if (barCenter >= targetX && barCenter <= targetX + targetWidth) {
+        return barCenter >= targetX && barCenter <= targetX + targetWidth;
+      }
+
+      function stopBar() {
+        if (!isStarted || isGameOver || isReady) return;
+
+        if (isHit()) {
           playSound('success', level);
           score += 100;
           level++;
           scoreText.textContent = score;
           levelText.textContent = level;
-          
+          flashStart = performance.now();
+
           if (navigator.vibrate) navigator.vibrate(30);
-          
+
           setupNextLevel();
         } else {
           playSound('gameover', level);
           gameOver();
         }
+      }
+
+      function handleTap(e) {
+        if (e.target.closest('button, a')) return;
+        stopBar();
       }
 
       function gameOver() {
@@ -384,7 +484,7 @@
 
         if (score > bestScore) {
           bestScore = score;
-          localStorage.setItem('justStopBest', bestScore);
+          safeSet('justStopBest', bestScore);
           bestText.textContent = bestScore;
           titleBestText.textContent = bestScore;
           newRecordMsg.style.display = 'block';
@@ -402,14 +502,18 @@
         resultScreen.style.display = 'flex';
       }
 
-      // タイトル画面をタップしてゲーム開始
-      titleScreen.addEventListener('pointerdown', (e) => {
-        e.stopPropagation(); // この最初のタップがストップ判定にならないようにする
+      function startGame() {
         if (isStarted) return;
         isStarted = true;
         titleScreen.style.display = 'none';
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        getAudio();
         initGame();
+      }
+
+      // タイトル画面をタップしてゲーム開始
+      titleScreen.addEventListener('pointerdown', (e) => {
+        e.stopPropagation(); // この最初のタップがストップ判定にならないようにする
+        startGame();
       });
 
       document.getElementById('game-container').addEventListener('pointerdown', handleTap);
@@ -418,20 +522,22 @@
         initGame();
       });
 
+      // スペースキー: タイトル→開始 / プレイ中→ストップ / ゲームオーバー→リトライ
+      document.addEventListener('keydown', (e) => {
+        if (e.code !== 'Space' || e.repeat) return;
+        e.preventDefault();
+        if (!isStarted) {
+          startGame();
+        } else if (isGameOver) {
+          initGame();
+        } else {
+          stopBar();
+        }
+      });
+
       // 起動時はタイトル画面の裏に静止状態のゲーム画面を描画しておく
       resetState();
       draw();
-      // 開発者ツール関連のキー操作・右クリックを無効化（簡易的な抑止）
-      document.addEventListener('keydown', (e) => {
-        const ctrlOrCmd = e.ctrlKey || e.metaKey;
-        const isBlocked =
-          e.code === 'F12' ||                                            // F12
-          (ctrlOrCmd && e.shiftKey && ['KeyI', 'KeyJ', 'KeyC'].includes(e.code)) || // Ctrl+Shift+I/J/C
-          (e.metaKey && e.altKey && ['KeyI', 'KeyJ', 'KeyC'].includes(e.code)) ||   // Mac: Cmd+Option+I/J/C
-          (ctrlOrCmd && e.code === 'KeyU');                              // ソース表示 (Ctrl+U / Cmd+Option+U)
-        if (isBlocked) e.preventDefault();
-      });
-      document.addEventListener('contextmenu', (e) => e.preventDefault()); // 右クリック禁止
     </script>
     <script data-goatcounter="https://ikesandesu.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
   </body>
